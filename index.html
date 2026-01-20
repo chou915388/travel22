@@ -20,9 +20,15 @@
 </head>
 <body class="bg-gray-50 text-gray-900">
     <div id="root"></div>
+    <!-- 
+      Using esm.sh to transpile the TSX file on the fly. 
+      This ensures the server responds with 'application/javascript' 
+      instead of 'application/octet-stream'.
+    -->
+    <script type="module" src="https://esm.sh/run/gh/${window.location.hostname}${window.location.pathname}index.tsx"></script>
+    
+    <!-- Fallback for local development or direct file access if the above fails -->
     <script type="module">
-      // This wrapper helps handle TSX loading in some environments 
-      // by ensuring the browser treats it as a module
       import "./index.tsx";
     </script>
 </body>

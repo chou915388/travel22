@@ -6,20 +6,24 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Travel Planner & Journal</title>
     <script src="https://cdn.tailwindcss.com"></script>
-<script type="importmap">
+    <script type="importmap">
 {
   "imports": {
-    "react/": "https://esm.sh/react@^19.2.3/",
-    "react": "https://esm.sh/react@^19.2.3",
+    "react": "https://esm.sh/react@19.0.0",
+    "react-dom": "https://esm.sh/react-dom@19.0.0",
+    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
     "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
-    "@google/genai": "https://esm.sh/@google/genai"
+    "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
 </head>
 <body class="bg-gray-50 text-gray-900">
     <div id="root"></div>
-    <!-- Changed /index.tsx to index.tsx for GitHub Pages compatibility -->
-    <script type="module" src="index.tsx"></script>
+    <script type="module">
+      // This wrapper helps handle TSX loading in some environments 
+      // by ensuring the browser treats it as a module
+      import "./index.tsx";
+    </script>
 </body>
 </html>

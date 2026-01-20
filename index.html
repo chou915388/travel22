@@ -6,30 +6,392 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Travel Planner & Journal</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script type="importmap">
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
+        body { font-family: 'Inter', sans-serif; }
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+        .cursor-cell { cursor: cell; }
+    </style>
+<script type="importmap">
 {
   "imports": {
-    "react": "https://esm.sh/react@19.0.0",
-    "react-dom": "https://esm.sh/react-dom@19.0.0",
-    "react-dom/client": "https://esm.sh/react-dom@19.0.0/client",
-    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
     "react/": "https://esm.sh/react@^19.2.3/"
   }
 }
 </script>
 </head>
-<body class="bg-gray-50 text-gray-900">
+<body class="bg-gray-50 text-gray-900 overflow-hidden">
     <div id="root"></div>
-    <!-- 
-      Using esm.sh to transpile the TSX file on the fly. 
-      This ensures the server responds with 'application/javascript' 
-      instead of 'application/octet-stream'.
-    -->
-    <script type="module" src="https://esm.sh/run/gh/${window.location.hostname}${window.location.pathname}index.tsx"></script>
-    
-    <!-- Fallback for local development or direct file access if the above fails -->
-    <script type="module">
-      import "./index.tsx";
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        // --- Utilities & Formulas ---
+        const getColName = (index) => {
+            let name = '';
+            while (index >= 0) {
+                name = String.fromCharCode((index % 26) + 65) + name;
+                index = Math.floor(index / 26) - 1;
+            }
+            return name;
+        };
+
+        const evaluateFormula = (formula, rows) => {
+            const match = formula.match(/^=(SUM|AVG|MIN|MAX)\((.*)\)$/i);
+            if (!match) return formula;
+
+            const func = match[1].toUpperCase();
+            const rangeStr = match[2];
+            const rangeParts = rangeStr.split(':');
+            if (rangeParts.length !== 2) return "#VALUE!";
+
+            const parseCoord = (coord) => {
+                const colMatch = coord.match(/[A-Z]+/);
+                const rowMatch = coord.match(/[0-9]+/);
+                if (!colMatch || !rowMatch) return null;
+                const col = colMatch[0];
+                const row = rowMatch[0];
+                let colIdx = 0;
+                for (let i = 0; i < col.length; i++) {
+                    colIdx = colIdx * 26 + col.charCodeAt(i) - 64;
+                }
+                return { r: parseInt(row) - 1, c: colIdx - 1 };
+            };
+
+            const start = parseCoord(rangeParts[0]);
+            const end = parseCoord(rangeParts[1]);
+            if (!start || !end) return "#REF!";
+
+            const numbers = [];
+            for (let r = Math.min(start.r, end.r); r <= Math.max(start.r, end.r); r++) {
+                for (let c = Math.min(start.c, end.c); c <= Math.max(start.c, end.c); c++) {
+                    const val = parseFloat(rows[r]?.[c]?.value || '0');
+                    if (!isNaN(val)) numbers.push(val);
+                }
+            }
+
+            if (numbers.length === 0) return "0";
+            switch (func) {
+                case 'SUM': return numbers.reduce((a, b) => a + b, 0).toString();
+                case 'AVG': return (numbers.reduce((a, b) => a + b, 0) / numbers.length).toFixed(2);
+                case 'MIN': return Math.min(...numbers).toString();
+                case 'MAX': return Math.max(...numbers).toString();
+                default: return "#NAME?";
+            }
+        };
+
+        // --- Components ---
+
+        const Spreadsheet = ({ sheet, onUpdate }) => {
+            const [editing, setEditing] = useState(null);
+            const [inputValue, setInputValue] = useState('');
+            const rowCount = 50;
+            const colCount = 15;
+
+            const handleCellClick = (r, c) => {
+                setEditing({ r, c });
+                const cell = sheet.rows[r]?.[c];
+                setInputValue(cell?.formula || cell?.value || '');
+            };
+
+            const handleBlur = () => {
+                if (!editing) return;
+                const { r, c } = editing;
+                const newRows = [...sheet.rows];
+                if (!newRows[r]) newRows[r] = [];
+
+                const isFormula = inputValue.startsWith('=');
+                const newCell = isFormula 
+                    ? { value: evaluateFormula(inputValue, newRows), formula: inputValue }
+                    : { value: inputValue };
+
+                newRows[r][c] = newCell;
+                
+                // Recalculate all formulas in the sheet
+                const updatedRows = newRows.map((row) => 
+                    row?.map((cell) => cell?.formula ? { ...cell, value: evaluateFormula(cell.formula, newRows) } : cell) || []
+                );
+
+                onUpdate({ ...sheet, rows: updatedRows });
+                setEditing(null);
+            };
+
+            return (
+                <div className="absolute inset-0 overflow-auto bg-white">
+                    <table className="border-collapse text-[13px] w-full table-fixed min-w-[1200px]">
+                        <thead className="sticky top-0 z-10">
+                            <tr className="bg-[#f8f9fa]">
+                                <th className="w-10 border border-gray-300 bg-[#f8f9fa] text-gray-500 font-normal"></th>
+                                {Array.from({ length: colCount }).map((_, i) => (
+                                    <th key={i} className="w-48 border border-gray-300 font-normal p-0 h-12">
+                                        <div className="flex flex-col h-full bg-gray-50">
+                                            <div className="text-[10px] text-gray-400 border-b border-gray-100 py-0.5">{getColName(i)}</div>
+                                            <div className="flex-1 flex items-center justify-center font-bold text-gray-600 px-2 text-center leading-tight">
+                                                {i === 0 ? '日期 (Date)' : 
+                                                 i === 1 ? '預計時長 (Duration)' : 
+                                                 i === 2 ? '景點名稱 (Spot)' : 
+                                                 i === 3 ? '地址 (Address)' : 
+                                                 i === 4 ? '備註 (Notes)' : ''}
+                                            </div>
+                                        </div>
+                                    </th>
+                                ))}
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {Array.from({ length: rowCount }).map((_, r) => (
+                                <tr key={r} className="group">
+                                    <td className="bg-[#f8f9fa] border border-gray-300 text-center text-gray-400 text-xs font-medium sticky left-0 z-0">{r + 1}</td>
+                                    {Array.from({ length: colCount }).map((_, c) => {
+                                        const cell = sheet.rows[r]?.[c];
+                                        const isEditing = editing?.r === r && editing?.c === c;
+                                        return (
+                                            <td 
+                                                key={c} 
+                                                className={`border border-gray-200 p-0 h-9 relative cursor-cell hover:bg-blue-50/30 transition-colors ${isEditing ? 'ring-2 ring-indigo-500 z-10' : ''}`}
+                                                onClick={() => handleCellClick(r, c)}
+                                            >
+                                                {isEditing ? (
+                                                    <input
+                                                        autoFocus
+                                                        className="w-full h-full px-2 outline-none bg-white shadow-inner"
+                                                        value={inputValue}
+                                                        onChange={(e) => setInputValue(e.target.value)}
+                                                        onBlur={handleBlur}
+                                                        onKeyDown={(e) => e.key === 'Enter' && handleBlur()}
+                                                    />
+                                                ) : (
+                                                    <div className="w-full h-full px-2 flex items-center overflow-hidden whitespace-nowrap text-gray-700">
+                                                        {cell?.value || ''}
+                                                    </div>
+                                                )}
+                                            </td>
+                                        );
+                                    })}
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+            );
+        };
+
+        const JournalView = ({ sheets }) => {
+            const openMaps = (address) => {
+                if (!address) return;
+                window.open(`https://www.google.com/maps/search/?api=1&query=${encodeURIComponent(address)}`, '_blank');
+            };
+
+            return (
+                <div className="w-full max-w-4xl mx-auto px-6 py-12 space-y-16 pb-32">
+                    {sheets.map((sheet) => (
+                        <div key={sheet.id} className="space-y-8">
+                            <div className="flex items-center space-x-4">
+                                <h2 className="text-5xl font-black text-gray-900 tracking-tight">{sheet.name}</h2>
+                                <div className="h-1 flex-1 bg-indigo-100 rounded-full"></div>
+                            </div>
+                            
+                            <div className="grid gap-12">
+                                {sheet.rows.filter(row => row && row[2]?.value).map((row, idx) => {
+                                    const date = row[0]?.value;
+                                    const duration = row[1]?.value;
+                                    const spot = row[2]?.value;
+                                    const address = row[3]?.value;
+                                    const notes = row[4]?.value;
+
+                                    return (
+                                        <div key={idx} className="flex gap-6 md:gap-10 group">
+                                            <div className="hidden sm:flex flex-col items-center">
+                                                <div className="w-10 h-10 rounded-2xl bg-indigo-600 shadow-lg shadow-indigo-200 flex items-center justify-center text-white font-black">
+                                                    {idx + 1}
+                                                </div>
+                                                <div className="w-0.5 flex-1 bg-gradient-to-b from-indigo-200 to-transparent mt-4"></div>
+                                            </div>
+                                            <div className="flex-1 space-y-4">
+                                                <div className="flex flex-wrap items-center gap-3">
+                                                    <span className="px-3 py-1 bg-indigo-50 text-indigo-700 text-[10px] font-black uppercase rounded-lg tracking-widest border border-indigo-100">
+                                                        {date || 'No Date'}
+                                                    </span>
+                                                    <span className="text-gray-400 text-xs font-semibold">
+                                                        • {duration || 'Time TBD'}
+                                                    </span>
+                                                </div>
+                                                
+                                                <div className="flex flex-col md:flex-row md:items-start justify-between gap-4">
+                                                    <div className="space-y-2">
+                                                        <h3 className="text-3xl font-extrabold text-gray-900 leading-none">{spot}</h3>
+                                                        {address && (
+                                                            <button 
+                                                                onClick={() => openMaps(address)}
+                                                                className="text-indigo-500 hover:text-indigo-700 text-sm font-bold flex items-center gap-1 transition-colors"
+                                                            >
+                                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+                                                                {address}
+                                                            </button>
+                                                        )}
+                                                    </div>
+                                                </div>
+
+                                                <div className="relative group/img overflow-hidden rounded-3xl shadow-xl aspect-[16/9] bg-gray-100 border border-gray-200">
+                                                    <img 
+                                                        src={`https://picsum.photos/seed/${spot}-${idx}/1000/600`} 
+                                                        alt={spot}
+                                                        className="w-full h-full object-cover group-hover/img:scale-105 transition-transform duration-1000"
+                                                    />
+                                                    <div className="absolute inset-0 bg-black/5 group-hover/img:bg-black/0 transition-colors"></div>
+                                                </div>
+
+                                                {notes && (
+                                                    <p className="text-gray-600 text-lg leading-relaxed bg-white p-6 rounded-2xl border border-gray-100 shadow-sm italic">
+                                                        "{notes}"
+                                                    </p>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                                {sheet.rows.filter(row => row && row[2]?.value).length === 0 && (
+                                    <div className="bg-white rounded-3xl p-20 text-center border-2 border-dashed border-gray-200">
+                                        <div className="text-5xl mb-4">🧳</div>
+                                        <p className="text-gray-400 font-medium">Add some spots in the Excel view to see them here.</p>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
+                    ))}
+                </div>
+            );
+        };
+
+        const App = () => {
+            const [state, setState] = useState({
+                sheets: [{
+                    id: 'sheet-1',
+                    name: 'Summer Tokyo 2024',
+                    rows: [
+                        [{ value: '2024-07-10' }, { value: '3 Days' }, { value: 'Shibuya Crossing' }, { value: 'Shibuya, Tokyo' }, { value: 'The busiest crossing in the world! Must visit Hachiko statue.' }],
+                        [{ value: '2024-07-13' }, { value: '1 Day' }, { value: 'TeamLab Borderless' }, { value: 'Odaiba, Tokyo' }, { value: 'Incredible digital art experience.' }],
+                        [{ value: 'Expenses:' }, { value: '' }, { value: 'Total Cost' }, { value: '' }, { value: '=SUM(B1:B2)' }]
+                    ]
+                }],
+                activeSheetId: 'sheet-1',
+                view: 'excel',
+            });
+
+            const activeSheet = state.sheets.find(s => s.id === state.activeSheetId) || state.sheets[0];
+
+            const updateSheet = (updatedSheet) => {
+                setState(prev => ({
+                    ...prev,
+                    sheets: prev.sheets.map(s => s.id === updatedSheet.id ? updatedSheet : s)
+                }));
+            };
+
+            const addSheet = () => {
+                const newId = `sheet-${Date.now()}`;
+                const newSheet = { id: newId, name: `Trip ${state.sheets.length + 1}`, rows: [] };
+                setState(prev => ({ ...prev, sheets: [...prev.sheets, newSheet], activeSheetId: newId }));
+            };
+
+            const renameSheet = (id) => {
+                const sheet = state.sheets.find(s => s.id === id);
+                const newName = prompt('Enter trip name:', sheet.name);
+                if (newName) {
+                    setState(prev => ({
+                        ...prev,
+                        sheets: prev.sheets.map(s => s.id === id ? { ...s, name: newName } : s)
+                    }));
+                }
+            };
+
+            return (
+                <div className="fixed inset-0 flex flex-col h-screen select-none">
+                    {/* Header */}
+                    <header className="h-16 bg-white border-b border-gray-200 flex items-center justify-between px-6 flex-shrink-0 z-30">
+                        <div className="flex items-center space-x-3">
+                            <div className="w-9 h-9 bg-indigo-600 rounded-xl flex items-center justify-center shadow-lg shadow-indigo-200">
+                                <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="3" d="M3.055 11H5a2 2 0 012 2v1a2 2 0 002 2 2 2 0 012 2v2.945M8 3.935V5.5A2.5 2.5 0 0010.5 8h.5a2 2 0 012 2 2 2 0 002 2 2 2 0 012 2v1.5a2.5 2.5 0 002.5 2.5h1.665M9 21h6m-3-3v3m-3-3a3 3 0 116 0M9 21a3 3 0 11-6 0m15 0a3 3 0 11-6 0"/></svg>
+                            </div>
+                            <span className="font-black text-xl tracking-tight text-gray-900 hidden sm:block">TravelOS</span>
+                        </div>
+
+                        <div className="flex bg-gray-100 p-1.5 rounded-2xl border border-gray-200 shadow-inner">
+                            <button 
+                                onClick={() => setState(p => ({ ...p, view: 'excel' }))}
+                                className={`px-6 py-1.5 rounded-xl text-xs font-black transition-all ${state.view === 'excel' ? 'bg-white shadow-md text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}
+                            >
+                                PLANNER
+                            </button>
+                            <button 
+                                onClick={() => setState(p => ({ ...p, view: 'journal' }))}
+                                className={`px-6 py-1.5 rounded-xl text-xs font-black transition-all ${state.view === 'journal' ? 'bg-white shadow-md text-indigo-600' : 'text-gray-500 hover:text-gray-800'}`}
+                            >
+                                JOURNAL
+                            </button>
+                        </div>
+
+                        <div className="flex items-center space-x-4">
+                            <div className="hidden lg:flex flex-col text-right">
+                                <span className="text-[10px] font-black text-indigo-500 uppercase tracking-widest">System Status</span>
+                                <span className="text-[11px] text-gray-400 font-bold">Autosave Active • Formulating</span>
+                            </div>
+                            <button className="bg-gray-900 text-white px-5 py-2 rounded-xl text-xs font-black hover:bg-gray-800 transition-colors shadow-lg shadow-gray-200">EXPORT</button>
+                        </div>
+                    </header>
+
+                    {/* Content */}
+                    <main className="flex-1 relative overflow-hidden flex flex-col">
+                        {state.view === 'excel' ? (
+                            <div className="h-full flex flex-col">
+                                <div className="h-10 bg-white border-b border-gray-200 flex items-center px-4 space-x-1 flex-shrink-0 overflow-x-auto no-scrollbar">
+                                    {state.sheets.map(s => (
+                                        <div key={s.id} className="h-full flex items-center">
+                                            <button 
+                                                onClick={() => setState(prev => ({ ...prev, activeSheetId: s.id }))}
+                                                onDoubleClick={() => renameSheet(s.id)}
+                                                className={`h-full px-5 text-[11px] font-black border-r border-gray-100 flex items-center gap-2 transition-all ${state.activeSheetId === s.id ? 'bg-indigo-50 text-indigo-600 border-b-2 border-indigo-600' : 'text-gray-400 hover:bg-gray-50'}`}
+                                            >
+                                                {s.name}
+                                            </button>
+                                        </div>
+                                    ))}
+                                    <button onClick={addSheet} className="px-4 text-gray-300 hover:text-indigo-500 text-xl transition-colors">+</button>
+                                </div>
+                                <div className="flex-1 relative">
+                                    <Spreadsheet sheet={activeSheet} onUpdate={updateSheet} />
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="flex-1 overflow-y-auto bg-gray-50/50">
+                                <JournalView sheets={state.sheets} />
+                            </div>
+                        )}
+                    </main>
+
+                    {/* Footer bar */}
+                    <footer className="h-7 bg-white border-t border-gray-200 flex items-center justify-between px-6 flex-shrink-0 z-30">
+                        <div className="text-[9px] font-bold text-gray-400 flex items-center gap-2">
+                            <div className="w-1.5 h-1.5 bg-green-500 rounded-full animate-pulse"></div>
+                            OS READY • {state.sheets.length} TRIP DATASETS MOUNTED
+                        </div>
+                        <div className="flex space-x-4 text-[9px] font-black text-gray-300 tracking-tighter uppercase">
+                            <span>A:Date</span>
+                            <span>B:Duration</span>
+                            <span className="text-indigo-400">C:Spot Name</span>
+                            <span>D:Address</span>
+                        </div>
+                    </footer>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
     </script>
 </body>
 </html>

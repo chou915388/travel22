@@ -1,0 +1,5 @@
+{
+  "name": "Gemini Travel Planner & Journal",
+  "description": "A powerful travel planning application featuring a full-featured Excel-like spreadsheet with formula support (SUM, AVG, MIN, MAX), multi-sheet management, and a beautiful Journal View for trip memories.",
+  "requestFramePermissions": []
+}
